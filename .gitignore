@@ -1,0 +1,8 @@
+node_modules/
+*.log
+.DS_Store
+
+# Le contenu de la fiche n'est pas versionné : ce dépôt est public, et ce sont
+# ses notes de révision personnelles. Régénérable depuis le PDF source avec
+# les scripts de tools/ (voir docs/import.md).
+data/
