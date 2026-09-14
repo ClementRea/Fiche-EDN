@@ -19,17 +19,24 @@
     mode: "clavier",
     raw: "",
     recording: false,
-    photoFile: null,
+    micState: "unknown",   // unsupported | unknown | granted | denied
     photoUrl: null,
     busy: null,
     proposal: null,
     editingId: null,
     draft: "",
     flashId: null,
-    importOpen: false,
-    importText: "",
-    importBusy: null,
     loaded: false,
+
+    importOpen: false,
+    importStage: "pick",   // pick | working | review
+    importName: "",
+    importText: "",
+    importInfo: "",
+    importProgress: null,  // { done, total, label }
+    importEntries: [],
+    importIgnores: [],
+    importSkip: {},
   };
 
   var $ = function (id) { return document.getElementById(id); };
@@ -37,6 +44,43 @@
   var recognition = null;
   var toastTimer = null;
   var flashTimer = null;
+  var pendingFile = null;
+
+  /* ---- thème ------------------------------------------------------------ */
+  /* La page hérite du thème de claude.ai. Ce sélecteur permet d'en sortir :
+     « auto » rend la main à l'hôte, les deux autres l'emportent. */
+  var THEME_KEY = "fiche-edn-theme";
+  var hostTheme = null;
+  var themeMode = "auto";
+
+  function applyTheme() {
+    var root = document.documentElement;
+    if (themeMode === "auto") {
+      if (hostTheme) root.setAttribute("data-theme", hostTheme);
+      else root.removeAttribute("data-theme");
+    } else {
+      root.setAttribute("data-theme", themeMode);
+    }
+    var label = themeMode === "light" ? "clair" : themeMode === "dark" ? "sombre" : "auto";
+    var btn = $("btn-theme");
+    btn.textContent = "Thème : " + label;
+    btn.setAttribute("aria-label", "Thème d'affichage : " + label + ". Cliquer pour changer.");
+  }
+
+  function cycleTheme() {
+    themeMode = themeMode === "auto" ? "light" : themeMode === "light" ? "dark" : "auto";
+    try { window.localStorage.setItem(THEME_KEY, themeMode); } catch (e) {}
+    applyTheme();
+  }
+
+  function initTheme() {
+    hostTheme = document.documentElement.getAttribute("data-theme");
+    try {
+      var saved = window.localStorage.getItem(THEME_KEY);
+      if (saved === "light" || saved === "dark" || saved === "auto") themeMode = saved;
+    } catch (e) {}
+    applyTheme();
+  }
 
   /* ---- petits utilitaires ---------------------------------------------- */
 
@@ -86,6 +130,68 @@
     }).join("");
   }
 
+  /* La dictée a quatre états, et aucun ne laisse l'écran vide : il y a
+     toujours un bouton à presser ou une marche à suivre. */
+  function renderDictee() {
+    var panel = $("panel-dictee");
+    var osHelp =
+      "Sur iPhone et iPad, touchez le micro du clavier. Sur Mac, appuyez deux " +
+      "fois sur <strong>Fn</strong>. La dictée du système écrit directement dans " +
+      "le champ ci-dessus et reste la voie la plus fiable.";
+
+    if (S.micState === "unsupported") {
+      panel.innerHTML =
+        '<div class="notice"><strong>Ce navigateur ne sait pas transcrire</strong>' +
+        "<p>Utilisez la dictée du système, qui fait la même chose en mieux. " + osHelp + "</p></div>";
+      return;
+    }
+
+    if (S.micState === "denied") {
+      panel.innerHTML =
+        '<div class="notice"><strong>Le micro est bloqué pour cette page</strong>' +
+        "<p>Rien n'a été enregistré. Pour le débloquer&nbsp;:</p>" +
+        "<ol><li><strong>Safari</strong> — menu <em>Réglages de ce site web</em>, " +
+        "puis <em>Microphone&nbsp;: Autoriser</em>.</li>" +
+        "<li><strong>Chrome</strong> — l'icône de cadenas ou de réglages dans la " +
+        "barre d'adresse, puis <em>Microphone</em>.</li>" +
+        "<li>Rechargez la page, puis réessayez.</li></ol>" +
+        "<p>Si aucun réglage n'apparaît, c'est que la page, intégrée dans " +
+        "Claude, n'a pas accès au micro. " + osHelp + "</p>" +
+        '<div class="notice-actions">' +
+        '<button class="btn-outline" type="button" data-mic="retry">Réessayer</button>' +
+        '<button class="btn-quiet" type="button" data-mic="keyboard">Revenir au clavier</button>' +
+        "</div></div>";
+      return;
+    }
+
+    if (S.micState === "unknown") {
+      panel.innerHTML =
+        '<div class="notice"><strong>Autorisez le micro pour dicter</strong>' +
+        "<p>Votre navigateur va demander la permission. Rien n'est enregistré " +
+        "avant que vous n'acceptiez, et la transcription s'écrit dans le champ " +
+        "ci-dessus où vous pouvez la relire.</p>" +
+        '<div class="notice-actions">' +
+        '<button class="btn-primary" type="button" data-mic="ask">Autoriser le micro</button>' +
+        '<button class="btn-quiet" type="button" data-mic="keyboard">Plutôt au clavier</button>' +
+        "</div></div>";
+      return;
+    }
+
+    var bars = "";
+    for (var i = 0; i < 14; i++) bars += '<i style="animation-delay:' + (i * 55) + 'ms"></i>';
+    panel.innerHTML =
+      '<button class="rec-btn" type="button" data-mic="toggle" aria-pressed="' +
+        (S.recording ? "true" : "false") + '" aria-label="' +
+        (S.recording ? "Arrêter la dictée" : "Démarrer la dictée") + '">' +
+        (S.recording ? "■" : "●") + "</button>" +
+      '<div class="bars' + (S.recording ? " on" : "") + '" aria-hidden="true">' + bars + "</div>" +
+      '<div class="hint">' +
+        (S.recording
+          ? "Dictée en cours — parlez normalement, le texte s'écrit au fil de la phrase."
+          : "La transcription du navigateur s'arrête aux silences&nbsp;: relancez-la si elle se coupe. " + osHelp) +
+      "</div>";
+  }
+
   function renderComposer() {
     $("composer").hidden = S.exam;
     if (S.exam) return;
@@ -95,35 +201,16 @@
     });
     $("panel-dictee").hidden = S.mode !== "dictee";
     $("panel-photo").hidden = S.mode !== "photo";
+    if (S.mode === "dictee") renderDictee();
 
     if ($("raw").value !== S.raw) $("raw").value = S.raw;
-
-    var bars = $("bars");
-    if (!bars.childElementCount) {
-      var html = "";
-      for (var i = 0; i < 14; i++) html += '<i style="animation-delay:' + (i * 55) + 'ms"></i>';
-      bars.innerHTML = html;
-    }
-    bars.className = "bars" + (S.recording ? " on" : "");
-
-    var rec = $("btn-rec");
-    rec.setAttribute("aria-pressed", S.recording ? "true" : "false");
-    rec.textContent = S.recording ? "■" : "●";
-    rec.setAttribute("aria-label", S.recording ? "Arrêter la dictée" : "Démarrer la dictée");
-    rec.disabled = !recognition;
-
-    $("rec-hint").innerHTML = recognition
-      ? (S.recording
-        ? "Dictée en cours — parlez normalement, le texte s'écrit au fil de la phrase."
-        : "La reconnaissance du navigateur s'arrête aux silences : relancez-la si elle se coupe. Sur iPhone, le micro du clavier reste plus fiable.")
-      : "Ce navigateur ne fait pas de reconnaissance vocale. Utilisez la dictée du système : le micro du clavier sur iPhone et iPad, ou <strong>Fn Fn</strong> sur Mac — elle écrit directement dans le champ ci-dessus.";
 
     var thumb = $("photo-thumb");
     if (S.photoUrl) { thumb.src = S.photoUrl; thumb.hidden = false; }
     else { thumb.hidden = true; thumb.removeAttribute("src"); }
 
     var analyse = $("btn-analyse");
-    var busy = S.busy === "classify" || S.busy === "structure" || S.busy === "photo";
+    var busy = !!S.busy;
     analyse.disabled = busy || !S.raw.trim();
     analyse.innerHTML = busy
       ? '<span class="spinner"></span>' +
@@ -132,9 +219,8 @@
       : "Analyser et classer";
 
     $("chips").innerHTML = '<span class="hint" style="flex:0 1 auto">' +
-      (S.specs.length
-        ? "Classement dans l'une de vos " + S.specs.length + " spécialités."
-        : "") + "</span>";
+      (S.specs.length ? "Classement dans l'une de vos " + S.specs.length + " spécialités." : "") +
+      "</span>";
   }
 
   function renderProposal() {
@@ -217,7 +303,6 @@
   function renderSheet() {
     var list = visible();
     var root = $("sheet");
-
     if (!S.loaded) { root.innerHTML = ""; return; }
 
     if (!list.length) {
@@ -242,26 +327,95 @@
     }).join("");
   }
 
-  function renderModal() {
+  /* ---- la modale d'import ----------------------------------------------- */
+
+  function excerpt(blocks) {
+    var t = (blocks || []).map(B.blockText).join(" ");
+    return t.length > 190 ? t.slice(0, 190) + "…" : t;
+  }
+
+  function renderImport() {
     var root = $("modal-root");
     if (!S.importOpen) { root.innerHTML = ""; return; }
-    var busy = !!S.importBusy;
-    root.innerHTML =
-      '<div class="scrim" data-scrim="1"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="imp-t">' +
-        '<h2 id="imp-t">Compléter la fiche depuis un document</h2>' +
-        "<p>Collez ici le contenu d'un cours ou d'une fiche — l'IA le découpe en notions " +
-        "et vous le montre avant d'écrire quoi que ce soit. Votre fiche d'origine, elle, " +
-        "est déjà en place.</p>" +
+    var inner;
+
+    if (S.importStage === "working") {
+      var p = S.importProgress || { done: 0, total: 1, label: "" };
+      var pct = Math.round((p.done / Math.max(p.total, 1)) * 100);
+      inner =
+        "<h2 id=\"imp-t\">Analyse en cours</h2>" +
+        "<p>" + esc(p.label) + "</p>" +
+        '<div class="progress"><i style="width:' + pct + '%"></i></div>' +
+        '<div class="proposal-note">' + p.done + " / " + p.total + " — rien n'est écrit tant que vous n'avez pas validé.</div>" +
+        '<div class="modal-actions">' +
+          '<button class="btn-outline" type="button" data-act="cancel-import">Arrêter</button>' +
+        "</div>";
+    } else if (S.importStage === "review") {
+      var kept = S.importEntries.filter(function (_, i) { return !S.importSkip[i]; }).length;
+      inner =
+        "<h2 id=\"imp-t\">" + S.importEntries.length +
+          (S.importEntries.length > 1 ? " entrées proposées" : " entrée proposée") + "</h2>" +
+        "<p>Décochez ce que vous ne voulez pas. Rien n'entre dans la fiche avant " +
+        "que vous ne validiez.</p>" +
+        (S.importEntries.length
+          ? '<div class="pick-list">' + S.importEntries.map(function (e, i) {
+              return '<label class="pick"><input type="checkbox" data-pick="' + i + '"' +
+                (S.importSkip[i] ? "" : " checked") + " />" +
+                '<span class="pick-body">' +
+                  '<span class="pick-title">' + esc(e.title) + "</span>" +
+                  '<span class="pick-route">' + esc(e.spec) +
+                    (e.action === "merge" ? " · complète une entrée existante" : " · nouvelle notion") +
+                  "</span>" +
+                  '<span class="pick-preview">' + esc(excerpt(e.blocks)) + "</span>" +
+                "</span></label>";
+            }).join("") + "</div>"
+          : '<div class="empty" style="margin-top:0">Aucune entrée exploitable n\'a été tirée de ce document.</div>') +
+        (S.importIgnores.length
+          ? '<div class="notice" style="margin-top:14px"><strong>' + S.importIgnores.length +
+            (S.importIgnores.length > 1 ? " passages écartés" : " passage écarté") + "</strong>" +
+            '<ol>' + S.importIgnores.slice(0, 8).map(function (g) {
+              return "<li>" + (g.extrait ? "<em>" + esc(g.extrait.slice(0, 70)) + "</em> — " : "") +
+                esc(g.raison) + "</li>";
+            }).join("") + "</ol>" +
+            "<p>Rien n'en a été écrit : en cas de doute, la fiche reste en l'état.</p></div>"
+          : "") +
+        '<div class="modal-actions">' +
+          '<button class="btn-primary" type="button" data-act="commit-import"' +
+            (kept ? "" : " disabled") + ">Ajouter " + kept +
+            (kept > 1 ? " entrées" : " entrée") + "</button>" +
+          '<button class="btn-outline" type="button" data-act="close-import">Annuler</button>' +
+        "</div>";
+    } else {
+      inner =
+        "<h2 id=\"imp-t\">Compléter la fiche depuis un document</h2>" +
+        "<p>Chargez un fichier — l'IA le découpe en notions et vous les montre " +
+        "avant d'écrire quoi que ce soit.</p>" +
+        (S.notions.length
+          ? '<div class="proposal-note" style="margin:-8px 0 16px">Votre fiche d\'origine (' +
+            S.notions.length + " notions, " + S.specs.length +
+            " spécialités) est déjà en place : ce qui suit s'y ajoute.</div>"
+          : "") +
+        '<div class="import-file" id="drop">' +
+          '<button class="btn-outline" type="button" data-act="pick-file">Choisir un fichier</button>' +
+          '<span class="meta">' +
+            (S.importName
+              ? "<strong>" + esc(S.importName) + "</strong>" + (S.importInfo ? "<br />" + esc(S.importInfo) : "")
+              : "…ou déposez-le ici. Formats acceptés&nbsp;: PDF, Word (.docx), Markdown, texte.") +
+          "</span>" +
+        "</div>" +
         '<div class="drop">' +
           '<label for="imp-text" hidden>Contenu à importer</label>' +
-          '<textarea id="imp-text" placeholder="Collez le texte ici…">' + esc(S.importText) + "</textarea>" +
+          '<textarea id="imp-text" placeholder="…ou collez directement le texte ici.">' +
+          esc(S.importText) + "</textarea>" +
         "</div>" +
-        (busy ? '<div class="proposal-note"><span class="spinner"></span>' + esc(S.importBusy) + "</div>" : "") +
         '<div class="modal-actions">' +
-          '<button class="btn-primary" type="button" data-act="do-import"' + (busy ? " disabled" : "") + ">Analyser le texte</button>" +
+          '<button class="btn-primary" type="button" data-act="do-import">Analyser</button>' +
           '<button class="btn-outline" type="button" data-act="close-import">Fermer</button>' +
-        "</div>" +
-      "</div></div>";
+        "</div>";
+    }
+
+    root.innerHTML = '<div class="scrim" data-scrim="1">' +
+      '<div class="modal" role="dialog" aria-modal="true" aria-labelledby="imp-t">' + inner + "</div></div>";
   }
 
   function render() {
@@ -270,7 +424,7 @@
     renderComposer();
     renderProposal();
     renderSheet();
-    renderModal();
+    renderImport();
     $("btn-exam").setAttribute("aria-pressed", S.exam ? "true" : "false");
     $("btn-exam").textContent = S.exam ? "Quitter la relecture" : "Mode relecture";
     $("btn-export").hidden = !downloads;
@@ -297,13 +451,8 @@
       S.notions = S.notions.map(function (n) { return n.id === target.id ? target : n; });
     } else {
       target = {
-        id: FE.store.newId(),
-        spec: p.spec,
-        title: p.notionTitle,
-        item: "",
-        ai: true,
-        blocks: p.blocks,
-        order: S.notions.length,
+        id: FE.store.newId(), spec: p.spec, title: p.notionTitle,
+        item: "", ai: true, blocks: p.blocks, order: S.notions.length,
       };
       S.notions = S.notions.concat([target]);
       S.specs = specsOf(S.notions);
@@ -311,7 +460,6 @@
 
     S.proposal = null;
     S.raw = "";
-    S.photoFile = null;
     S.photoUrl = null;
     S.activeSpec = p.spec;
     if (thenEdit) { S.editingId = target.id; S.draft = B.toPlain(target.blocks); }
@@ -352,29 +500,24 @@
     });
   }
 
-  /* ---- analyse ---------------------------------------------------------- */
+  /* ---- analyse d'une note ---------------------------------------------- */
 
   function analyse() {
     var raw = S.raw.trim();
     if (!raw || S.busy) return;
-
     S.busy = "classify";
     S.proposal = null;
     render();
 
     FE.ai.classify(raw, S.notions, S.specs).then(function (verdict) {
       if (verdict.decision === "refus") {
-        S.busy = null;
-        S.proposal = verdict;
-        render();
+        S.busy = null; S.proposal = verdict; render();
         return null;
       }
       S.busy = "structure";
       render();
       return FE.ai.structure(raw, verdict).then(function (out) {
-        S.busy = null;
-        S.proposal = out;
-        render();
+        S.busy = null; S.proposal = out; render();
       });
     }).catch(function () {
       S.busy = null;
@@ -383,37 +526,138 @@
     });
   }
 
-  /* ---- import depuis du texte collé ------------------------------------ */
+  /* ---- import d'un document -------------------------------------------- */
+
+  var importCancelled = false;
+
+  function chooseFile(file) {
+    if (!file) return;
+    pendingFile = file;
+    S.importName = file.name || "document";
+    S.importInfo = "Lecture…";
+    render();
+    FE.reader.read(file, function (done, total) {
+      S.importInfo = "Lecture de la page " + done + " sur " + total + "…";
+      renderImport();
+    }).then(function (res) {
+      S.importText = res.text;
+      var chars = res.text.replace(/\s+/g, " ").length;
+      S.importInfo = (res.pages ? res.pages + " pages · " : "") +
+        chars.toLocaleString("fr-FR") + " caractères · " +
+        FE.reader.chunk(res.text).length + " lots à analyser";
+      render();
+    }).catch(function (e) {
+      pendingFile = null;
+      S.importName = "";
+      S.importInfo = "";
+      render();
+      toast(e && e.message ? e.message : "Ce fichier n'a pas pu être lu.");
+    });
+  }
 
   function runImport() {
-    var text = ($("imp-text") ? $("imp-text").value : S.importText).trim();
-    if (!text) { toast("Collez d'abord du texte à analyser."); return; }
+    var box = $("imp-text");
+    var text = (box ? box.value : S.importText).trim();
+    if (!text) { toast("Chargez un fichier ou collez du texte à analyser."); return; }
+
+    var chunks = FE.reader.chunk(text);
+    importCancelled = false;
     S.importText = text;
-    S.importBusy = "Analyse du texte…";
+    S.importStage = "working";
+    S.importEntries = [];
+    S.importIgnores = [];
+    S.importSkip = {};
+    S.importProgress = { done: 0, total: chunks.length, label: "Analyse du document…" };
     render();
 
-    FE.ai.classify(text, S.notions, S.specs).then(function (verdict) {
-      if (verdict.decision === "refus") {
-        S.importBusy = null;
-        S.importOpen = false;
-        S.proposal = verdict;
-        render();
-        return null;
-      }
-      S.importBusy = "Rédaction de l'entrée…";
-      render();
-      return FE.ai.structure(text, verdict).then(function (out) {
-        S.importBusy = null;
-        S.importOpen = false;
-        S.importText = "";
-        S.raw = text;
-        S.proposal = out;
-        render();
+    function step(i) {
+      if (importCancelled) return Promise.resolve();
+      if (i >= chunks.length) return Promise.resolve();
+      S.importProgress = {
+        done: i, total: chunks.length,
+        label: "Lot " + (i + 1) + " sur " + chunks.length + " — lecture et mise en forme.",
+      };
+      renderImport();
+      return FE.ai.extractNotions(chunks[i], S.notions, S.specs).then(function (out) {
+        S.importEntries = S.importEntries.concat(out.entrees || []);
+        S.importIgnores = S.importIgnores.concat(out.ignores || []);
+        return step(i + 1);
       });
-    }).catch(function () {
-      S.importBusy = null;
-      toast("L'analyse a échoué — rien n'a été écrit.");
+    }
+
+    step(0).then(function () {
+      S.importProgress = null;
+      S.importStage = importCancelled && !S.importEntries.length ? "pick" : "review";
       render();
+    }).catch(function () {
+      S.importProgress = null;
+      S.importStage = "review";
+      render();
+      toast("L'analyse s'est interrompue — rien n'a été écrit.");
+    });
+  }
+
+  function commitImport() {
+    var keep = S.importEntries.filter(function (_, i) { return !S.importSkip[i]; });
+    if (!keep.length) return;
+
+    // Plusieurs lots peuvent viser la même notion : on les cumule avant
+    // d'écrire, pour n'enregistrer chaque document qu'une fois.
+    var byId = {};
+    var created = [];
+    keep.forEach(function (e) {
+      if (e.action === "merge" && e.notion) {
+        var cur = byId[e.notion.id] || Object.assign({}, e.notion, {
+          ai: true, blocks: (e.notion.blocks || []).slice(),
+        });
+        cur.blocks = cur.blocks.concat(e.blocks);
+        byId[e.notion.id] = cur;
+      } else {
+        created.push({
+          id: FE.store.newId(), spec: e.spec, title: e.title,
+          item: "", ai: true, blocks: e.blocks, order: S.notions.length + created.length,
+        });
+      }
+    });
+
+    var merged = Object.keys(byId).map(function (k) { return byId[k]; });
+    S.notions = S.notions
+      .map(function (n) { return byId[n.id] || n; })
+      .concat(created);
+    S.specs = specsOf(S.notions);
+
+    var all = merged.concat(created);
+    S.importStage = "working";
+    S.importProgress = { done: 0, total: all.length, label: "Écriture dans la fiche…" };
+    render();
+
+    var i = 0;
+    function write() {
+      if (i >= all.length) return Promise.resolve();
+      S.importProgress = { done: i, total: all.length, label: "Écriture dans la fiche…" };
+      renderImport();
+      var n = all[i];
+      i += 1;
+      return FE.store.saveNotion(n, S.notions).then(write);
+    }
+
+    write().then(function () {
+      S.importOpen = false;
+      S.importStage = "pick";
+      S.importEntries = [];
+      S.importIgnores = [];
+      S.importText = "";
+      S.importName = "";
+      S.importInfo = "";
+      S.importProgress = null;
+      pendingFile = null;
+      render();
+      toast(all.length + (all.length > 1 ? " entrées ajoutées." : " entrée ajoutée."));
+    }).catch(function () {
+      S.importProgress = null;
+      S.importStage = "review";
+      render();
+      toast("L'écriture a échoué — rechargez la page pour repartir de l'état enregistré.");
     });
   }
 
@@ -428,19 +672,14 @@
       group.forEach(function (n) {
         out.push("### " + n.title, "");
         (n.blocks || []).forEach(function (b) {
-          if (b.type === "list") {
-            b.items.forEach(function (i) { out.push("- " + i); });
-          } else if (b.type === "table") {
+          if (b.type === "list") b.items.forEach(function (i) { out.push("- " + i); });
+          else if (b.type === "table") {
             out.push("| " + b.head.join(" | ") + " |");
             out.push("|" + b.head.map(function () { return " --- "; }).join("|") + "|");
             b.rows.forEach(function (r) { out.push("| " + r.join(" | ") + " |"); });
-          } else if (b.type === "mnemo") {
-            out.push("> **Mnémo** — " + b.text);
-          } else if (b.type === "schema") {
-            out.push("_[schéma : " + (b.text || b.imageId || "image") + "]_");
-          } else {
-            out.push(b.text);
-          }
+          } else if (b.type === "mnemo") out.push("> **Mnémo** — " + b.text);
+          else if (b.type === "schema") out.push("_[schéma : " + (b.text || b.imageId || "image") + "]_");
+          else out.push(b.text);
           out.push("");
         });
       });
@@ -456,7 +695,7 @@
       .catch(function () { toast("Export annulé."); });
   }
 
-  /* ---- dictée ----------------------------------------------------------- */
+  /* ---- micro et dictée --------------------------------------------------- */
 
   function setupRecognition() {
     var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -476,16 +715,16 @@
         if (ev.results[i].isFinal) committed += chunk;
         else interim += chunk;
       }
-      S.raw = (committed + interim).replace(/\s+/g, " ").trimStart();
+      S.raw = (committed + interim).replace(/\s+/g, " ").replace(/^\s+/, "");
       $("raw").value = S.raw;
       $("btn-analyse").disabled = !S.raw.trim();
     };
     r.onerror = function (ev) {
       S.recording = false;
+      var err = ev && ev.error;
+      if (err === "not-allowed" || err === "service-not-allowed") S.micState = "denied";
       render();
-      if (ev && ev.error === "not-allowed") {
-        toast("Micro refusé. Autorisez-le, ou utilisez la dictée du clavier.");
-      } else if (ev && ev.error !== "aborted") {
+      if (err && err !== "aborted" && err !== "no-speech" && S.micState !== "denied") {
         toast("La dictée s'est interrompue. Le micro du clavier reste plus fiable.");
       }
     };
@@ -493,17 +732,72 @@
     return r;
   }
 
-  function toggleRec() {
+  /* Demande la permission explicitement : c'est ce qui déclenche la boîte de
+     dialogue du navigateur, au lieu de laisser un bouton inerte. */
+  function askMic() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      return Promise.resolve(true); // on laissera la reconnaissance demander elle-même
+    }
+    return navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+      stream.getTracks().forEach(function (t) { t.stop(); });
+      S.micState = "granted";
+      return true;
+    }).catch(function (err) {
+      var name = err && err.name;
+      if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+        S.micState = "denied";
+        toast("Aucun micro détecté sur cet appareil.");
+      } else {
+        S.micState = "denied";
+      }
+      return false;
+    });
+  }
+
+  function refreshMicState() {
+    if (!recognition) { S.micState = "unsupported"; return Promise.resolve(); }
+    if (!navigator.permissions || !navigator.permissions.query) {
+      if (S.micState !== "granted" && S.micState !== "denied") S.micState = "unknown";
+      return Promise.resolve();
+    }
+    return navigator.permissions.query({ name: "microphone" }).then(function (st) {
+      S.micState = st.state === "granted" ? "granted" : st.state === "denied" ? "denied" : "unknown";
+      st.onchange = function () {
+        S.micState = st.state === "granted" ? "granted" : st.state === "denied" ? "denied" : "unknown";
+        render();
+      };
+    }).catch(function () {
+      if (S.micState !== "granted" && S.micState !== "denied") S.micState = "unknown";
+    });
+  }
+
+  function startDictation() {
     if (!recognition) return;
-    if (S.recording) { try { recognition.stop(); } catch (e) {} S.recording = false; render(); return; }
     try {
       recognition.start();
       S.recording = true;
     } catch (e) {
       S.recording = false;
-      toast("Impossible de démarrer la dictée.");
+      toast("La dictée est déjà en cours.");
     }
     render();
+  }
+
+  function onMic(action) {
+    if (action === "keyboard") { S.mode = "clavier"; render(); $("raw").focus(); return; }
+    if (action === "ask" || action === "retry") {
+      askMic().then(function (ok) {
+        render();
+        if (ok) startDictation();
+        else toast("Le micro reste bloqué — la marche à suivre est indiquée ci-dessus.");
+      });
+      return;
+    }
+    if (action === "toggle") {
+      if (S.recording) { try { recognition.stop(); } catch (e) {} S.recording = false; render(); return; }
+      if (S.micState === "granted") startDictation();
+      else askMic().then(function (ok) { render(); if (ok) startDictation(); });
+    }
   }
 
   /* ---- photo ------------------------------------------------------------ */
@@ -511,7 +805,6 @@
   function onPhoto(file) {
     if (!file) return;
     if (S.photoUrl) URL.revokeObjectURL(S.photoUrl);
-    S.photoFile = file;
     S.photoUrl = URL.createObjectURL(file);
     S.busy = "photo";
     render();
@@ -533,6 +826,8 @@
   /* ---- événements -------------------------------------------------------- */
 
   function wire() {
+    $("btn-theme").addEventListener("click", cycleTheme);
+
     $("q").addEventListener("input", function (e) { S.query = e.target.value; renderSheet(); });
 
     $("raw").addEventListener("input", function (e) {
@@ -544,25 +839,33 @@
       $("tab-" + m).addEventListener("click", function () {
         S.mode = m;
         if (m !== "dictee" && S.recording && recognition) { try { recognition.stop(); } catch (e) {} }
-        render();
+        if (m === "dictee") refreshMicState().then(render);
+        else render();
       });
     });
 
-    $("btn-rec").addEventListener("click", toggleRec);
-    $("btn-analyse").addEventListener("click", analyse);
+    $("panel-dictee").addEventListener("click", function (e) {
+      var b = e.target.closest("[data-mic]");
+      if (b) onMic(b.getAttribute("data-mic"));
+    });
 
+    $("btn-analyse").addEventListener("click", analyse);
     $("btn-photo").addEventListener("click", function () { $("photo").click(); });
     $("photo").addEventListener("change", function (e) { onPhoto(e.target.files && e.target.files[0]); });
 
     $("btn-exam").addEventListener("click", function () {
-      S.exam = !S.exam;
-      S.proposal = null;
-      S.editingId = null;
-      render();
+      S.exam = !S.exam; S.proposal = null; S.editingId = null; render();
     });
 
-    $("btn-import").addEventListener("click", function () { S.importOpen = true; render(); });
+    $("btn-import").addEventListener("click", function () {
+      S.importOpen = true; S.importStage = "pick"; render();
+    });
     $("btn-export").addEventListener("click", exportFiche);
+
+    $("import-file-input").addEventListener("change", function (e) {
+      chooseFile(e.target.files && e.target.files[0]);
+      e.target.value = "";
+    });
 
     $("rail").addEventListener("click", function (e) {
       var b = e.target.closest("[data-spec]");
@@ -579,8 +882,7 @@
       else if (act === "accept-edit") accept(true);
       else if (act === "discard" || act === "reformulate") { S.proposal = null; render(); }
       else if (act === "manual") {
-        S.proposal = null;
-        render();
+        S.proposal = null; render();
         toast("Choisissez la spécialité dans la colonne de gauche, puis « Modifier » sur la notion.");
       }
     });
@@ -603,22 +905,54 @@
       if (e.target.closest("[data-cancel]")) { S.editingId = null; S.draft = ""; render(); }
     });
 
-    $("modal-root").addEventListener("click", function (e) {
+    var modal = $("modal-root");
+    modal.addEventListener("click", function (e) {
       var b = e.target.closest("[data-act]");
       if (b) {
         var act = b.getAttribute("data-act");
-        if (act === "close-import") { S.importOpen = false; render(); }
+        if (act === "close-import") {
+          S.importOpen = false; S.importStage = "pick"; S.importEntries = []; S.importIgnores = [];
+          render();
+        } else if (act === "pick-file") $("import-file-input").click();
         else if (act === "do-import") runImport();
+        else if (act === "cancel-import") { importCancelled = true; toast("Analyse arrêtée — rien n'a été écrit."); }
+        else if (act === "commit-import") commitImport();
         return;
       }
-      if (e.target.hasAttribute("data-scrim") && !S.importBusy) { S.importOpen = false; render(); }
+      if (e.target.hasAttribute("data-scrim") && S.importStage !== "working") {
+        S.importOpen = false; render();
+      }
+    });
+    modal.addEventListener("change", function (e) {
+      var pick = e.target.closest("[data-pick]");
+      if (!pick) return;
+      S.importSkip[pick.getAttribute("data-pick")] = !pick.checked;
+      renderImport();
+    });
+    modal.addEventListener("input", function (e) {
+      if (e.target.id === "imp-text") S.importText = e.target.value;
+    });
+    ["dragover", "dragleave", "drop"].forEach(function (kind) {
+      modal.addEventListener(kind, function (e) {
+        var zone = e.target.closest ? e.target.closest("#drop") : null;
+        if (!zone && kind !== "dragover") return;
+        e.preventDefault();
+        if (kind === "dragover" && zone) zone.classList.add("over");
+        if (kind === "dragleave" && zone) zone.classList.remove("over");
+        if (kind === "drop") {
+          if (zone) zone.classList.remove("over");
+          var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+          if (f) chooseFile(f);
+        }
+      });
     });
 
     document.addEventListener("keydown", function (e) {
-      if (e.key === "Escape" && S.importOpen && !S.importBusy) { S.importOpen = false; render(); }
+      if (e.key === "Escape" && S.importOpen && S.importStage !== "working") {
+        S.importOpen = false; render();
+      }
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && document.activeElement === $("raw")) {
-        e.preventDefault();
-        analyse();
+        e.preventDefault(); analyse();
       }
     });
   }
@@ -626,7 +960,9 @@
   /* ---- démarrage --------------------------------------------------------- */
 
   function boot() {
+    initTheme();
     recognition = setupRecognition();
+    if (!recognition) S.micState = "unsupported";
     wire();
     render();
 
@@ -637,7 +973,6 @@
       S.specs = specsOf(notions);
       S.loaded = true;
       render();
-      // Les schémas pèsent lourd : ils arrivent après le premier rendu.
       return FE.store.loadImages();
     }).then(function (images) {
       S.images = images || {};
@@ -656,9 +991,6 @@
         downloads = d;
         $("btn-export").hidden = !d;
       }).catch(function () {});
-      FE.ai.available().then(function (s) {
-        if (!s) toast("L'IA n'est pas disponible ici : la fiche reste consultable et modifiable à la main.");
-      });
     }
   }
 

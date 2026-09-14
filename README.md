@@ -11,6 +11,7 @@ Publié comme Artifact Claude. Le code source vit ici.
 | | |
 |---|---|
 | **Saisie libre** | On écrit sans se relire. Clavier, dictée, ou photo d'une page de cours. |
+| **Import d'un document** | PDF, Word (.docx), Markdown ou texte : le document est découpé, analysé, et les entrées proposées sont cochables une par une avant écriture. |
 | **Classement** | L'IA trouve la spécialité et la notion clé, parmi celles de la fiche. |
 | **Structuration** | Elle rédige l'entrée dans le style du reste de la fiche : texte, liste, tableau comparatif ou mnémo. |
 | **Fusion** | Si une entrée proche existe, elle la complète au lieu de la dupliquer. |
@@ -18,6 +19,7 @@ Publié comme Artifact Claude. Le code source vit ici.
 | **Édition à la main** | Toute entrée se corrige directement, sans repasser par l'IA. |
 | **Relecture** | Un mode qui enlève tout ce qui n'est pas la fiche, pour la veille de l'examen. |
 | **Export** | La fiche entière en Markdown. |
+| **Thème** | Auto (celui de claude.ai), clair ou sombre, au choix et mémorisé. |
 
 ## La règle qui compte
 
@@ -39,6 +41,7 @@ propose, elle valide.
 ```
 src/index.html   coquille, styles, thèmes clair et sombre
 src/blocks.js    les cinq formes de bloc, leur validation, leur rendu
+src/reader.js    lecture d'un fichier déposé : .pdf, .docx, .md, .txt
 src/store.js     persistance `db` (un document par notion), repli localStorage
 src/ai.js        le pipeline `sample` en deux phases
 src/ui.js        rendu et interactions
@@ -47,6 +50,11 @@ tools/           import déterministe du PDF d'origine
 docs/spec.md     le cahier des charges technique
 docs/import.md   comment la structure est reconstruite, et comment c'est vérifié
 ```
+
+Les seules dépendances externes sont chargées à la demande, depuis cdnjs — le
+seul hôte admis par la politique de sécurité des artifacts : `pdf.js` pour les
+PDF et `mammoth` pour les .docx. Ouvrir la fiche pour la relire n'en télécharge
+aucune.
 
 Capabilities déclarées : `db`, `sample`, `downloads`. **Pas `assets`** — une page
 qui le déclare devient *organization-internal* et son lien cesse d'être

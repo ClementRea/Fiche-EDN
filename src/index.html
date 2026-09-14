@@ -483,6 +483,43 @@
     animation: spin 700ms linear infinite; vertical-align: -2px; margin-right: 6px;
   }
 
+  /* Un micro refusé ne doit jamais laisser l'écran vide : on explique et on
+     propose toujours une autre voie. */
+  .notice {
+    flex: 1 1 100%; display: flex; flex-direction: column; gap: 8px;
+    background: var(--warn-bg); border: 1px solid var(--warn-line);
+    border-radius: 9px; padding: 12px 14px;
+  }
+  .notice strong { color: var(--warn); font-size: 13px; }
+  .notice p { margin: 0; font-size: 12.5px; line-height: 1.6; color: var(--ink-2); }
+  .notice ol { margin: 0; padding-left: 18px; font-size: 12.5px; line-height: 1.7; color: var(--ink-2); }
+  .notice-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+
+  .import-file {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 16px; border: 1px dashed var(--line); border-radius: 11px;
+    background: var(--surface); margin-bottom: 14px;
+  }
+  .import-file.over { border-color: var(--accent); background: var(--accent-surface); }
+  .import-file .meta { font-size: 12.5px; color: var(--muted); line-height: 1.5; flex: 1 1 200px; }
+  .progress {
+    height: 5px; border-radius: 3px; background: var(--line);
+    overflow: hidden; margin-top: 10px;
+  }
+  .progress i { display: block; height: 100%; background: var(--accent); transition: width 200ms; }
+
+  .pick {
+    display: flex; gap: 10px; align-items: flex-start; padding: 11px 0;
+    border-bottom: 1px solid var(--line-2);
+  }
+  .pick:last-child { border-bottom: none; }
+  .pick input { margin-top: 3px; flex-shrink: 0; width: 16px; height: 16px; accent-color: var(--accent); }
+  .pick-body { min-width: 0; flex: 1; }
+  .pick-title { font-family: Newsreader, Georgia, serif; font-size: 15.5px; font-weight: 600; }
+  .pick-route { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+  .pick-preview { margin-top: 7px; font-size: 13px; line-height: 1.55; color: var(--ink-2); }
+  .pick-list { max-height: 46vh; overflow-y: auto; margin-top: 4px; }
+
   [hidden] { display: none !important; }
 
   @media (max-width: 720px) {
@@ -512,6 +549,7 @@
       <input id="q" type="search" placeholder="Rechercher une notion, un mot-clé…" autocomplete="off" />
     </div>
     <div class="top-actions">
+      <button class="btn" id="btn-theme" type="button" title="Thème d'affichage">Thème : auto</button>
       <button class="btn" id="btn-import" type="button">Importer</button>
       <button class="btn" id="btn-export" type="button">Exporter</button>
       <button class="btn" id="btn-exam" type="button" aria-pressed="false">Mode relecture</button>
@@ -539,11 +577,7 @@
         <label for="raw" hidden>Information à ajouter</label>
         <textarea id="raw" placeholder="Écrivez sans vous relire : « dans l'IC aiguë penser VNI si OAP avec détresse, nitrés si PAS > 110 »…"></textarea>
 
-        <div class="mode-panel" id="panel-dictee" hidden>
-          <button class="rec-btn" id="btn-rec" type="button" aria-pressed="false" aria-label="Démarrer la dictée">●</button>
-          <div class="bars" id="bars" aria-hidden="true"></div>
-          <div class="hint" id="rec-hint"></div>
-        </div>
+        <div class="mode-panel" id="panel-dictee" hidden></div>
 
         <div class="mode-panel" id="panel-photo" hidden>
           <input type="file" id="photo" accept="image/*" capture="environment" hidden />
@@ -565,10 +599,12 @@
   </div>
 </div>
 
+<input type="file" id="import-file-input" accept=".pdf,.docx,.md,.markdown,.txt,.csv" hidden />
 <div id="modal-root"></div>
 <div id="toast-root" aria-live="polite"></div>
 
 <script src="blocks.js"></script>
 <script src="store.js"></script>
+<script src="reader.js"></script>
 <script src="ai.js"></script>
 <script src="ui.js"></script>

@@ -212,6 +212,115 @@
     });
   }
 
+
+  /* ---- import en masse : un lot de document → des entrées proposées ----- */
+  function extractNotions(chunkText, notions, specs) {
+    return get().then(function (s) {
+      if (!s) return { entrees: [], ignores: [{ raison: "L'IA n'est pas disponible dans cette vue." }] };
+
+      var fresh = !specs.length;
+      var prompt =
+        "Voici un extrait d'un document de révision médicale (EDN). Tu en tires " +
+        "les entrées à ajouter à une fiche organisée par spécialité puis par " +
+        "notion clé.\n\n" +
+        (fresh
+          ? "La fiche est encore vide : nomme toi-même les spécialités, avec le nom " +
+            "usuel de la discipline.\n\n"
+          : "SPÉCIALITÉS EXISTANTES (les seules autorisées) :\n" + specs.join("\n") + "\n\n" +
+            "NOTIONS EXISTANTES (numéro | spécialité | titre) :\n" + buildIndex(notions) + "\n\n") +
+        "EXTRAIT À TRAITER :\n\"\"\"\n" + chunkText + "\n\"\"\"\n\n" +
+        "RÈGLES DE RÉDACTION :\n" +
+        "- N'invente RIEN. Tout ce que tu écris doit être dans l'extrait.\n" +
+        "- Ne reformule pas le sens, ne change aucun chiffre ni aucune unité.\n" +
+        "- Regroupe ce qui va ensemble : une notion clé par sujet, pas une par phrase.\n" +
+        "- Dans un tableau, chaque ligne a exactement autant de cellules que l'en-tête.\n" +
+        "- Ignore les en-têtes de page, numéros de page et titres de document.\n\n" +
+        RULES + "\n\n" +
+        "Tout passage sur lequel tu as le moindre doute va dans \"ignores\", " +
+        "jamais dans \"entrees\".\n\n" +
+        "Réponds UNIQUEMENT par un objet JSON, sans texte autour :\n" +
+        "{\"entrees\":[\n" +
+        "  {\"action\":\"new\",\"spec\":\"<spécialité>\",\"title\":\"<titre court>\",\"blocks\":[…]},\n" +
+        "  {\"action\":\"merge\",\"index\":<numéro d'une notion existante>,\"blocks\":[…]}\n" +
+        "],\"ignores\":[{\"extrait\":\"<début du passage>\",\"raison\":\"<pourquoi>\"}]}\n\n" +
+        "Formes de bloc autorisées, et aucune autre :\n" +
+        "{\"type\":\"text\",\"text\":\"…\"}\n" +
+        "{\"type\":\"list\",\"items\":[\"…\"]}\n" +
+        "{\"type\":\"table\",\"head\":[\"…\",\"…\"],\"rows\":[[\"…\",\"…\"]]}\n" +
+        "{\"type\":\"mnemo\",\"text\":\"…\"}";
+
+      if (bytes(prompt) > MAX_PROMPT) {
+        return { entrees: [], ignores: [{ raison: "Ce lot est trop volumineux pour un seul appel." }] };
+      }
+
+      return s.json(prompt, { modelTier: TIER }).then(function (out) {
+        return checkExtraction(out, notions, specs);
+      }).catch(function (e) {
+        return { entrees: [], ignores: [{ raison: explain(e) }] };
+      });
+    });
+  }
+
+  /* Une entrée qui ne passe pas la validation n'est pas réparée : elle est
+     écartée, avec sa raison, et rien n'entre dans la fiche par accident. */
+  function checkExtraction(out, notions, specs) {
+    var entrees = [];
+    var ignores = [];
+
+    if (!out || typeof out !== "object") {
+      return { entrees: [], ignores: [{ raison: "Réponse illisible du modèle." }] };
+    }
+    if (Array.isArray(out.ignores)) {
+      out.ignores.forEach(function (i) {
+        if (i && typeof i === "object") {
+          ignores.push({
+            extrait: typeof i.extrait === "string" ? i.extrait : "",
+            raison: typeof i.raison === "string" ? i.raison : "Passage écarté par l'IA.",
+          });
+        }
+      });
+    }
+    if (!Array.isArray(out.entrees)) return { entrees: entrees, ignores: ignores };
+
+    out.entrees.forEach(function (e) {
+      if (!e || typeof e !== "object") {
+        ignores.push({ extrait: "", raison: "Entrée malformée — écartée." });
+        return;
+      }
+      var check = FE.blocks.validate(e.blocks);
+      if (!check.ok) {
+        ignores.push({ extrait: String(e.title || ""), raison: "Mise en forme invalide (" + check.error + ")." });
+        return;
+      }
+      if (e.action === "merge") {
+        var i = e.index;
+        if (typeof i !== "number" || i % 1 !== 0 || i < 0 || i >= notions.length) {
+          ignores.push({ extrait: "", raison: "Le modèle a visé une notion qui n'existe pas." });
+          return;
+        }
+        entrees.push({
+          action: "merge", notion: notions[i], spec: notions[i].spec,
+          title: notions[i].title, blocks: e.blocks,
+        });
+        return;
+      }
+      var known = specs.length === 0 || specs.indexOf(e.spec) > -1;
+      if (typeof e.spec !== "string" || !e.spec.trim() || !known) {
+        ignores.push({ extrait: String(e.title || ""), raison: "Spécialité absente de la fiche." });
+        return;
+      }
+      if (typeof e.title !== "string" || e.title.trim().length < 3 || e.title.length > 120) {
+        ignores.push({ extrait: String(e.title || ""), raison: "Titre de notion inexploitable." });
+        return;
+      }
+      entrees.push({
+        action: "new", spec: e.spec, title: e.title.trim(), blocks: e.blocks, notion: null,
+      });
+    });
+
+    return { entrees: entrees, ignores: ignores };
+  }
+
   /* ---- photo : l'image devient du texte brut, relu avant tout classement */
   function readPhoto(file) {
     return get().then(function (s) {
@@ -245,6 +354,7 @@
     available: get,
     classify: classify,
     structure: structure,
+    extractNotions: extractNotions,
     readPhoto: readPhoto,
     imageAccept: imageAccept,
   };
