@@ -967,16 +967,17 @@
     render();
 
     FE.store.init().then(function () {
-      return FE.store.loadNotions();
-    }).then(function (notions) {
-      S.notions = notions;
-      S.specs = specsOf(notions);
+      // Base vide : c'est le tout premier lancement sur ce compte, la fiche
+      // embarquée avec la page s'y installe d'elle-même.
+      return FE.store.seedIfEmpty(function (done, total) {
+        $("stats").textContent = "installation de la fiche… " + done + " / " + total;
+      });
+    }).then(function (res) {
+      S.notions = res.notions || [];
+      S.specs = specsOf(S.notions);
       S.loaded = true;
       render();
-      return FE.store.loadImages();
-    }).then(function (images) {
-      S.images = images || {};
-      if (Object.keys(S.images).length) render();
+      if (res.seeded) toast("Fiche installée : " + S.notions.length + " notions, " + S.specs.length + " spécialités.");
       $("rail-foot").textContent = FE.store.online
         ? "Fiche personnelle, enregistrée sur votre compte."
         : "Hors ligne : les modifications restent sur cet appareil.";

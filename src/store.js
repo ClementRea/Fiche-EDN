@@ -23,6 +23,19 @@
     } catch (e) { /* quota plein ou stockage bloqué : la session reste utilisable */ }
   }
 
+  /* La fiche de départ pèse 76 Kio : on ne la charge que si la base est
+     vide, jamais pour une simple relecture. */
+  function loadSeed() {
+    if (window.FE_SEED) return Promise.resolve(window.FE_SEED);
+    return new Promise(function (resolve) {
+      var s = document.createElement("script");
+      s.src = "fiche-data.js";
+      s.onload = function () { resolve(window.FE_SEED || null); };
+      s.onerror = function () { resolve(null); };
+      document.head.appendChild(s);
+    });
+  }
+
   function newId() {
     return "n" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   }
@@ -115,6 +128,45 @@
       return step().then(function (out) {
         if (!db) localWrite(out);
         return out;
+      });
+    },
+
+    /* Au tout premier lancement la base est vide : on y verse la fiche
+       embarquée avec la page. C'est ce qui rend l'application installable
+       sur n'importe quel compte sans écrire 187 documents à la main. */
+    seedIfEmpty: function (onProgress) {
+      return store.loadNotions().then(function (existing) {
+        if (existing.length) return { notions: existing, seeded: false };
+        return loadSeed().then(function (bundle) {
+          if (!bundle || !bundle.notions || !bundle.notions.length) {
+            return { notions: [], seeded: false };
+          }
+          if (!db) {
+            localWrite(bundle.notions);
+            return { notions: bundle.notions, seeded: true };
+          }
+          var list = bundle.notions;
+          var i = 0;
+          function step() {
+            if (i >= list.length) return Promise.resolve();
+            var n = list[i];
+            i += 1;
+            if (onProgress) onProgress(i, list.length);
+            var body = Object.assign({}, n);
+            delete body.id;
+            body.createdAt = body.updatedAt = new Date().toISOString();
+            return db.doc("notions/" + n.id).set(body).then(step);
+          }
+          return step().then(function () {
+            return store.saveMeta({
+              specOrder: bundle.specs || [],
+              importedAt: new Date().toISOString(),
+              schemaVersion: 1,
+            });
+          }).then(function () {
+            return { notions: list, seeded: true };
+          });
+        });
       });
     },
 

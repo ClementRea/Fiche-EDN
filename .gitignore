@@ -6,3 +6,7 @@ node_modules/
 # ses notes de révision personnelles. Régénérable depuis le PDF source avec
 # les scripts de tools/ (voir docs/import.md).
 data/
+
+# Contenu de la fiche embarqué pour la publication — pas dans ce dépôt public.
+src/fiche-data.js
+src/schemas/

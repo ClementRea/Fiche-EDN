@@ -6,6 +6,14 @@ se structure et se fusionne toute seule dans la fiche existante.
 
 Publié comme Artifact Claude. Le code source vit ici.
 
+> **L'artifact doit appartenir à celle qui l'utilise.** La capability `db`
+> rend l'artifact *organization-internal* : il ne peut pas être partagé
+> publiquement, et tout lecteur ou rédacteur doit appartenir à l'organisation
+> du propriétaire. Un compte Claude personnel extérieur reçoit un *page not
+> found*, et aucun réglage de partage n'y change rien. L'application est donc
+> **auto-installable** : la fiche de départ voyage avec la page et s'écrit
+> dans la base au premier lancement, sur le compte qui publie.
+
 ## Ce que ça fait
 
 | | |
@@ -42,6 +50,8 @@ propose, elle valide.
 src/index.html   coquille, styles, thèmes clair et sombre
 src/blocks.js    les cinq formes de bloc, leur validation, leur rendu
 src/reader.js    lecture d'un fichier déposé : .pdf, .docx, .md, .txt
+src/fiche-data.js  la fiche de départ, chargée seulement si la base est vide
+src/schemas/     les 12 schémas, publiés avec la page
 src/store.js     persistance `db` (un document par notion), repli localStorage
 src/ai.js        le pipeline `sample` en deux phases
 src/ui.js        rendu et interactions
@@ -56,10 +66,9 @@ seul hôte admis par la politique de sécurité des artifacts : `pdf.js` pour le
 PDF et `mammoth` pour les .docx. Ouvrir la fiche pour la relire n'en télécharge
 aucune.
 
-Capabilities déclarées : `db`, `sample`, `downloads`. **Pas `assets`** — une page
-qui le déclare devient *organization-internal* et son lien cesse d'être
-partageable avec un compte Claude personnel extérieur ; les schémas sont donc
-stockés en data-URI dans des documents `db`.
+Capabilities déclarées : `db`, `sample`, `downloads`. Les schémas sont des
+fichiers publiés avec la page (`schemas/*.jpg`) plutôt que des documents `db` :
+plus simple, plus léger, et hors du plafond de 256 Kio par document.
 
 ## Le budget de contexte
 

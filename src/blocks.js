@@ -157,7 +157,11 @@
           esc(b.text) + "</span></div>";
       }
       if (b.type === "schema") {
-        var src = b.imageId && images ? images[b.imageId] : null;
+        // Les schémas sont publiés avec la page : un identifiant qui ne suit
+        // pas le format attendu ne construit aucune URL.
+        var src = /^schema-\d{2}$/.test(String(b.imageId || ""))
+          ? "schemas/" + b.imageId + ".jpg"
+          : null;
         if (src) {
           return '<figure class="schema" style="margin:0"><img src="' + esc(src) +
             '" alt="' + esc(b.text || "Schéma de la fiche") + '" loading="lazy" />' +
