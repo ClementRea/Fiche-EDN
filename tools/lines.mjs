@@ -1,7 +1,7 @@
 // Extract every text line from pdftotext -bbox-layout output, with geometry.
 import { readFileSync } from "node:fs";
 
-export const BBOX = "/tmp/claude-1000/-home-clement-dev-perso/0d265601-e1a7-4d74-92f4-b7773e8eb5c2/scratchpad/fiche.bbox.html";
+export const BBOX = process.env.FICHE_BBOX || "data/fiche.bbox.html";
 
 const ENT = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&apos;": "'", "&#39;": "'" };
 const unesc = s => s.replace(/&(?:amp|lt|gt|quot|apos|#39);/g, m => ENT[m]);

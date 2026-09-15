@@ -91,12 +91,23 @@ médical passe donc verbatim, sans reformulation par un modèle.
 PDF et du JSON : **0 mot perdu, 0 mot inventé**, les seules omissions étant
 explicitement déclarées. Voir `docs/import.md`.
 
+Sa fiche continue d'évoluer hors de l'application : il faut donc pouvoir la
+ré-importer depuis un export plus récent. C'est une seule commande, qui
+s'arrête d'elle-même si un seul mot est perdu ou inventé.
+
 ```sh
-node tools/extract-images.mjs fiche.pdf data/images
-node tools/parse-fiche.mjs data/fiche.json
-node tools/verify-import.mjs data/fiche.json   # échoue si un mot manque
-node tools/build-seed.mjs
+./tools/import.sh ~/Téléchargements/fiche_erreurs.pdf
 ```
+
+Elle enchaîne l'extraction des schémas, la reconstruction de la structure, la
+vérification mot à mot, puis la fabrication du paquet embarqué
+(`src/fiche-data.js` et `src/schemas/`). Il ne reste qu'à republier.
+
+**Le moment de bascule compte.** L'amorçage n'a lieu que sur une base vide :
+une fois qu'elle a commencé à écrire dans l'application, republier un seed plus
+récent ne l'écrasera pas. L'ordre est donc : dernier export → ré-import →
+publication sur son compte → et à partir de là, l'application devient la seule
+source, le document d'origine cesse d'être modifié.
 
 Le contenu de la fiche n'est pas versionné ici : ce dépôt est public, et ce
 sont des notes de révision personnelles.
