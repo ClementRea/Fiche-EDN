@@ -12,6 +12,12 @@ const H_SUB = 12.5;     // hauteur de ligne d'un titre de tableau autonome
 const X_CELL = 72.4;    // les cellules commencent à 72.72, les titres à 72.0
 const ROW_GAP = 11.75;  // écart continuation (≤11.5) / nouvelle ligne (≥12.0)
 const COL_TOL = 12;     // tolérance d'alignement d'une colonne
+const PAGE_TOP = 160;   // au-delà, une ligne n'est plus en tête de page
+const SPACE_W = 3.5;    // largeur d'une espace, mesurée sur le document
+
+// Les en-têtes de tableau réimprimés à chaque page sont retirés : on les
+// consigne pour que la vérification les déclare au lieu de les ignorer.
+let dropped = [];
 
 // x d'abord, hauteur ensuite : des guillemets « » suffisent à gonfler la
 // hauteur d'une ligne de cellule au-delà d'un titre, mais jamais son xMin.
@@ -46,9 +52,9 @@ const colIndex = (cols, x) => {
 const BULLET = /^[-\u2013\u2014\u2022\u00b7]\s+/;
 
 /** Reconstitue les paragraphes d'une cellule : ≤11.75 = suite, > = nouveau. */
-function paragraphsOf(lines) {
+function paragraphsOf(lines, rightEdge) {
   const out = [];
-  let cur = null, prevY = null, prevPage = null;
+  let cur = null, prevY = null, prevPage = null, prevXMax = null;
   for (const l of lines) {
     // Un saut de page remet y à zéro : l'écart vertical n'y veut plus rien
     // dire. Une puce ouvre alors un paragraphe, le reste poursuit le précédent.
@@ -57,14 +63,22 @@ function paragraphsOf(lines) {
     // sont espacées comme un simple repli de ligne, l'écart ne les sépare pas.
     const t = l.text.trim();
     const starts = BULLET.test(t) || /^\d+[.)]\s/.test(t);
-    const breaks = crossesPage ? starts : (starts || l.y - prevY > ROW_GAP);
+    // Une ligne repliée occupe toute la largeur de sa colonne. Si la
+    // précédente s'arrêtait nettement avant le bord, c'est que le retour à
+    // la ligne était voulu : la suivante ouvre une entrée.
+    // Un retour à la ligne est voulu si le premier mot de la ligne suivante
+    // aurait tenu sur la précédente. Sinon c'est un simple repli, et le
+    // point de coupe ne dépend que de la longueur de ce mot.
+    const deliberate = rightEdge != null && prevXMax != null &&
+      prevXMax + SPACE_W + l.firstWordW <= rightEdge;
+    const breaks = crossesPage ? starts : (starts || deliberate || l.y - prevY > ROW_GAP);
     if (cur === null || prevY === null || breaks) {
       if (cur) out.push(cur);
       cur = l.text.trim();
     } else {
       cur += " " + l.text.trim();
     }
-    prevY = l.y; prevPage = l.page;
+    prevY = l.y; prevPage = l.page; prevXMax = l.xMax;
   }
   if (cur) out.push(cur);
   return out.map(p => p.replace(/\s+/g, " ").trim()).filter(Boolean);
@@ -194,15 +208,38 @@ function rowsOf(lines) {
     }
     for (const [ci, ws] of runs) {
       split.push({ page: l.page, y: l.y, x: cols[ci], col: ci,
+                   xMax: Math.max.apply(null, ws.map(w => w.xMax)),
+                   firstWordW: ws[0].xMax - ws[0].x,
                    text: ws.map(w => w.text).join(" ").trim() });
     }
   }
   // Les en-têtes répétés en haut de chaque page sont retirés avant le
   // découpage : sinon la ligne d'en-tête ouvrirait une ligne de tableau qui
   // avalerait la fin de la cellule coupée par le saut de page.
-  const keyed = split.filter(l => l.text && !HEADER_CELL.test(l.text.trim()))
+  let keyed = split.filter(l => l.text && !HEADER_CELL.test(l.text.trim()))
     .sort((a, b) => a.page - b.page || a.y - b.y || a.x - b.x);
+
+  // Tout tableau réimprime son en-tête en haut de chaque page. Quand cet
+  // en-tête n'a pas de cellule en première colonne, il n'ouvre aucune ligne
+  // et se fait avaler par la ligne précédente : on le retire d'abord.
+  if (keyed.length) {
+    const top = keyed[0];
+    const header = new Map();
+    for (const l of keyed) {
+      if (l.page !== top.page || l.y - top.y > ROW_GAP) break;
+      header.set(l.col, l.text);
+    }
+    keyed = keyed.filter(l => {
+      const repeat = l.page !== top.page && l.y <= PAGE_TOP && header.get(l.col) === l.text;
+      if (repeat) dropped.push(l.text);
+      return !repeat;
+    });
+  }
   // En-tête dont la 1ʳᵉ cellule est vide : la région commence avant la 1ʳᵉ ligne.
+  const edges = cols.map((_, ci) => {
+    const xs = keyed.filter(l => l.col === ci).map(l => l.xMax);
+    return xs.length ? Math.max.apply(null, xs) : null;
+  });
   const first = firstOf(keyed);
   // Les frontières de ligne viennent de la 1ʳᵉ colonne : un titre de notion
   // s'y replie (écart 11.5) mais n'y saute jamais de paragraphe.
@@ -225,12 +262,21 @@ function rowsOf(lines) {
     const mine = keyed.filter(l => !before(l, lo) && (!hi || before(l, hi)));
     const cells = cols.map(() => []);
     for (const l of mine) cells[l.col].push(l);
-    rows.push({ cols: cols.length, cells: cells.map(paragraphsOf), raw: cells });
+    rows.push({ cols: cols.length, cells: cells.map((c, ci) => paragraphsOf(c, edges[ci])), raw: cells });
   }
-  return rows;
+  // Un en-tête répété qui possède, lui, une cellule en première colonne
+  // ouvre bien une ligne : elle est identique à l'en-tête, on l'écarte.
+  const sig = r => r.cells.map(c => c.join(" ").trim()).join("\u0001");
+  const head = rows.length ? sig(rows[0]) : null;
+  return rows.filter((r, i) => {
+    if (i === 0 || sig(r) !== head) return true;
+    r.cells.forEach(c => c.forEach(t => dropped.push(t)));
+    return false;
+  });
 }
 
 export function build() {
+  dropped = [];
   const { specs, regions } = parse();
   const notions = [];
   let order = 0;
@@ -278,7 +324,7 @@ export function build() {
     } else {
       // Tableau comparatif autonome : une notion portant un seul bloc tableau.
       const head = rows[0].cells.map(c => c.join(" ").trim());
-      const body = rows.slice(1).map(r => r.cells.map(c => c.join(" ").trim()));
+      const body = rows.slice(1).map(r => r.cells.map(c => c.join("\n").trim()));
       if (!body.length) continue;
       const blocks = [{ type: "table", head, rows: body }];
       for (const note of region.notes) blocks.push({ type: "text", text: note });
@@ -289,7 +335,7 @@ export function build() {
       });
     }
   }
-  return { specs, notions };
+  return { specs, notions, dropped };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

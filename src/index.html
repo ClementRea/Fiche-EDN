@@ -406,7 +406,12 @@
     font-weight: 600; font-size: 11px; letter-spacing: 0.05em;
     text-transform: uppercase; color: var(--muted); background: var(--bg);
   }
-  td { padding: 9px 12px; border-bottom: 1px solid var(--line-2); vertical-align: top; line-height: 1.5; }
+  /* Les cellules gardent les retours à la ligne de la fiche d'origine :
+     une liste de critères empilés ne doit pas se lire d'un seul tenant. */
+  td {
+    padding: 9px 12px; border-bottom: 1px solid var(--line-2);
+    vertical-align: top; line-height: 1.5; white-space: pre-wrap;
+  }
   tr:last-child td { border-bottom: none; }
   .schema {
     border: 1px solid var(--line); border-radius: 9px; padding: 10px;

@@ -53,6 +53,9 @@ const DELIBERATE = new Map([
   ...words("Fiche erreurs — EDN").map(w => [w, 1]),
   ...words("Points à ne pas refaire, complétés au fil des révisions.").map(w => [w, 1]),
 ]);
+for (const line of fiche.dropped || []) {
+  for (const w of words(line)) DELIBERATE.set(w, (DELIBERATE.get(w) || 0) + 1);
+}
 const mnemoCount = fiche.notions.reduce(
   (n, x) => n + x.blocks.filter(b => b.type === "mnemo").length, 0);
 DELIBERATE.set("moyen", (DELIBERATE.get("moyen") || 0) + mnemoCount);
@@ -68,6 +71,7 @@ console.log(`mots dans le JSON : ${jsonWords.length}`);
 console.log(`manquants         : ${sum(missing)} (${missing.length} formes)`);
 console.log(`en trop           : ${sum(extra)} (${extra.length} formes)`);
 console.log(`  dont omissions voulues : ${sum(missing) - sum(unexplained)}`);
+console.log(`    · en-têtes de tableau réimprimés : ${(fiche.dropped || []).length} lignes`);
 console.log(`  PERTES INEXPLIQUÉES    : ${sum(unexplained)}`);
 if (unexplained.length) {
   console.log("\n— mots perdus —");

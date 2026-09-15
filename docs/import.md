@@ -14,7 +14,7 @@ est reconstruit à partir de la **géométrie**, mesurée sur le document :
 | écart vertical | ≤ 11.5 repli, ≥ 12.0 nouvelle ligne | délimiter les lignes du tableau |
 | `xMin` d'un mot | 72.7 / 197.8 / 232.8 / 322.8 / 447.8 | affecter chaque mot à sa colonne |
 
-Quatre pièges ont demandé un traitement particulier :
+Six pièges ont demandé un traitement particulier :
 
 - **La hauteur de ligne ment.** Des guillemets « » suffisent à faire passer une
   cellule pour un titre. C'est `xMin` qui départage, jamais la hauteur.
@@ -26,6 +26,18 @@ Quatre pièges ont demandé un traitement particulier :
   ligne de tableau qui avalait la fin de la cellule coupée par le saut.
 - **Un saut de page remet `y` à zéro.** L'écart vertical n'y veut plus rien
   dire ; seule une puce y ouvre un nouveau paragraphe.
+- **Tout tableau réimprime son en-tête en haut de chaque page.** Quand cet
+  en-tête n'a pas de cellule en première colonne, il n'ouvre aucune ligne et se
+  fait avaler par la précédente — « Non » devenait « Non Bilan locorégional ».
+  Les en-têtes répétés sont retirés, et consignés pour que la vérification les
+  déclare au lieu de les passer sous silence.
+- **Un retour à la ligne voulu ressemble à un simple repli.** Les deux ont le
+  même interligne : impossible de les distinguer par l'écart vertical. Le
+  critère est ailleurs — *le premier mot de la ligne suivante aurait-il tenu
+  sur la précédente ?* Si oui, la coupe était voulue ; sinon c'est un repli, et
+  le point de coupe ne dépend que de la longueur de ce mot. C'est ce qui rend
+  aux cellules de tableau leurs critères empilés sans jamais couper une phrase
+  en deux.
 
 ## Vérification
 
